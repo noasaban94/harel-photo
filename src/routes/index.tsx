@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { FolderUp, Images, Sparkles } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { FolderSync, FolderUp, Images, Loader2, Sparkles } from "lucide-react";
 import {
   createSampleZipFile,
   extractImagesFromZip,
@@ -9,6 +10,8 @@ import {
   type GalleryImage,
   type MemoryAlbum,
 } from "@/lib/zip-gallery";
+import { DEFAULT_DRIVE_FOLDER_URL } from "@/lib/google-drive";
+import { listDriveFolderImages } from "@/lib/google-drive.functions";
 import { ZipUploadZone } from "@/components/ZipUploadZone";
 import { GalleryGrid } from "@/components/GalleryGrid";
 import { MemoryGenerator } from "@/components/MemoryGenerator";
@@ -37,13 +40,17 @@ type ActiveView = "gallery" | "memories";
 
 function Index() {
   const [archiveName, setArchiveName] = useState<string | null>(null);
+  const [subfolderCount, setSubfolderCount] = useState<number>(0);
+  const [driveInput, setDriveInput] = useState(DEFAULT_DRIVE_FOLDER_URL);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
   const [images, setImages] = useState<GalleryImage[]>([]);
   const [memories, setMemories] = useState<MemoryAlbum[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>("gallery");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const imagesRef = useRef<GalleryImage[]>([]);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  const loadDriveFn = useServerFn(listDriveFolderImages);
 
   useEffect(() => {
     imagesRef.current = images;
@@ -52,6 +59,44 @@ function Index() {
   useEffect(() => {
     return () => revokeGalleryUrls(imagesRef.current);
   }, []);
+
+  const handleLoadDriveFolder = useCallback(
+    async (folderUrl: string) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await loadDriveFn({ data: { folderInput: folderUrl } });
+        if (result.images.length === 0) {
+          throw new Error("לא נמצאו תמונות בתיקיית Google Drive או בתתי-התיקיות שלה.");
+        }
+        const mapped: GalleryImage[] = result.images.map((item) => ({
+          id: item.id,
+          name: item.name,
+          path: item.path,
+          folder: item.folder,
+          url: item.url,
+          date: new Date(item.dateIso),
+          size: item.size,
+        }));
+        revokeGalleryUrls(imagesRef.current);
+        setImages(mapped);
+        setMemories(generateMemories(mapped));
+        setArchiveName(`Google Drive · ${result.folderName}`);
+        setSubfolderCount(result.subfolderCount);
+        setActiveView("gallery");
+        setShowDrivePicker(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "לא ניתן לטעון תמונות מ-Google Drive.");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [loadDriveFn],
+  );
+
+  useEffect(() => {
+    void handleLoadDriveFolder(DEFAULT_DRIVE_FOLDER_URL);
+  }, [handleLoadDriveFolder]);
 
   async function handleZipFile(file: File) {
     setIsLoading(true);
@@ -62,6 +107,7 @@ function Index() {
       setImages(extracted);
       setMemories(generateMemories(extracted));
       setArchiveName(file.name);
+      setSubfolderCount(0);
       setActiveView("gallery");
     } catch (err) {
       setError(err instanceof Error ? err.message : "אירעה שגיאה בעת פתיחת קובץ ה-ZIP.");
@@ -82,6 +128,12 @@ function Index() {
     }
   }
 
+  function handleDriveSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!driveInput.trim() || isLoading) return;
+    void handleLoadDriveFolder(driveInput);
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card/85 backdrop-blur-sm">
@@ -93,6 +145,7 @@ function Index() {
             {archiveName && (
               <p className="mt-0.5 truncate text-sm text-muted-foreground">
                 {archiveName} · {images.length} תמונות
+                {subfolderCount > 0 ? ` · ${subfolderCount} תתי-תיקיות` : ""}
               </p>
             )}
           </div>
@@ -129,6 +182,16 @@ function Index() {
                 </button>
               </nav>
 
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={() => setShowDrivePicker((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+              >
+                <FolderSync className="h-4 w-4 text-primary" />
+                תיקיית Drive
+              </button>
+
               <input
                 ref={replaceInputRef}
                 type="file"
@@ -152,10 +215,40 @@ function Index() {
             </div>
           )}
         </div>
+
+        {showDrivePicker && (
+          <form
+            onSubmit={handleDriveSubmit}
+            className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 border-t border-border px-4 py-3 sm:px-6 lg:px-8"
+          >
+            <input
+              type="text"
+              dir="ltr"
+              value={driveInput}
+              onChange={(e) => setDriveInput(e.target.value)}
+              placeholder="https://drive.google.com/drive/folders/..."
+              className="min-w-0 flex-1 rounded-xl border border-input bg-background px-3.5 py-2 text-sm text-foreground focus:outline-2 focus:outline-ring"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !driveInput.trim()}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderSync className="h-4 w-4" />}
+              סרוק תיקייה
+            </button>
+          </form>
+        )}
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
-        {images.length === 0 ? (
+        {isLoading && images.length === 0 ? (
+          <div className="mx-auto flex max-w-xl flex-col items-center justify-center rounded-2xl border border-border bg-card px-6 py-16 text-center">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
+            <h2 className="mt-4 text-2xl font-bold text-foreground">סורק תיקיות ותתי-תיקיות ב-Google Drive...</h2>
+            <p className="mt-2 text-sm text-muted-foreground">שולף את כל התמונות מהתיקייה שלך ומכין את הגלריה והזיכרונות.</p>
+          </div>
+        ) : images.length === 0 ? (
           <div className="space-y-10">
             <div className="mx-auto max-w-2xl text-center">
               <span className="inline-block rounded-full bg-accent px-3.5 py-1 text-xs font-medium text-accent-foreground">

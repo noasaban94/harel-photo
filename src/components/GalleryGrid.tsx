@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Folder, X } from "lucide-react";
 import type { GalleryImage } from "@/lib/zip-gallery";
 
 interface GalleryGridProps {
@@ -7,8 +7,28 @@ interface GalleryGridProps {
 }
 
 export function GalleryGrid({ images }: GalleryGridProps) {
+  const [selectedFolder, setSelectedFolder] = useState<string>("all");
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const activeImage = activeIndex !== null ? images[activeIndex] : undefined;
+
+  const folderCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const img of images) {
+      counts.set(img.folder, (counts.get(img.folder) ?? 0) + 1);
+    }
+    return Array.from(counts.entries());
+  }, [images]);
+
+  const visibleImages = useMemo(() => {
+    if (selectedFolder === "all") return images;
+    return images.filter((img) => img.folder === selectedFolder);
+  }, [images, selectedFolder]);
+
+  useEffect(() => {
+    setSelectedFolder("all");
+    setActiveIndex(null);
+  }, [images]);
+
+  const activeImage = activeIndex !== null ? visibleImages[activeIndex] : undefined;
 
   useEffect(() => {
     if (activeIndex === null) return;
@@ -16,21 +36,58 @@ export function GalleryGrid({ images }: GalleryGridProps) {
       if (event.key === "Escape") {
         setActiveIndex(null);
       } else if (event.key === "ArrowLeft") {
-        setActiveIndex((prev) => (prev === null ? null : (prev + 1) % images.length));
+        setActiveIndex((prev) => (prev === null ? null : (prev + 1) % visibleImages.length));
       } else if (event.key === "ArrowRight") {
         setActiveIndex((prev) =>
-          prev === null ? null : (prev - 1 + images.length) % images.length,
+          prev === null ? null : (prev - 1 + visibleImages.length) % visibleImages.length,
         );
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeIndex, images.length]);
+  }, [activeIndex, visibleImages.length]);
 
   return (
     <>
+      {folderCounts.length > 1 && (
+        <div className="mb-6 flex flex-wrap items-center gap-2" role="tablist" aria-label="סינון לפי תיקייה">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedFolder("all");
+              setActiveIndex(null);
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+              selectedFolder === "all"
+                ? "bg-primary text-primary-foreground"
+                : "border border-border bg-card text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            הכל ({images.length})
+          </button>
+          {folderCounts.map(([folder, count]) => (
+            <button
+              key={folder}
+              type="button"
+              onClick={() => {
+                setSelectedFolder(folder);
+                setActiveIndex(null);
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                selectedFolder === folder
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border bg-card text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Folder className="h-3.5 w-3.5" />
+              {folder} ({count})
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {images.map((image, index) => (
+        {visibleImages.map((image, index) => (
           <button
             key={image.id}
             type="button"
@@ -71,7 +128,7 @@ export function GalleryGrid({ images }: GalleryGridProps) {
               <div className="min-w-0">
                 <h3 className="truncate text-lg font-bold sm:text-xl">{activeImage.name}</h3>
                 <p className="text-xs text-overlay-foreground/70">
-                  תמונה {activeIndex + 1} מתוך {images.length} · {activeImage.folder}
+                  תמונה {activeIndex + 1} מתוך {visibleImages.length} · {activeImage.path}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -95,11 +152,13 @@ export function GalleryGrid({ images }: GalleryGridProps) {
             </div>
 
             <div className="relative flex w-full items-center justify-center">
-              {images.length > 1 && (
+              {visibleImages.length > 1 && (
                 <button
                   type="button"
                   aria-label="תמונה קודמת"
-                  onClick={() => setActiveIndex((activeIndex - 1 + images.length) % images.length)}
+                  onClick={() =>
+                    setActiveIndex((activeIndex - 1 + visibleImages.length) % visibleImages.length)
+                  }
                   className="absolute right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-overlay/70 text-overlay-foreground transition-colors hover:bg-overlay sm:right-4"
                 >
                   <ChevronRight className="h-6 w-6" />
@@ -112,11 +171,11 @@ export function GalleryGrid({ images }: GalleryGridProps) {
                 className="max-h-[76vh] w-auto max-w-full rounded-xl object-contain shadow-2xl"
               />
 
-              {images.length > 1 && (
+              {visibleImages.length > 1 && (
                 <button
                   type="button"
                   aria-label="תמונה הבאה"
-                  onClick={() => setActiveIndex((activeIndex + 1) % images.length)}
+                  onClick={() => setActiveIndex((activeIndex + 1) % visibleImages.length)}
                   className="absolute left-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full bg-overlay/70 text-overlay-foreground transition-colors hover:bg-overlay sm:left-4"
                 >
                   <ChevronLeft className="h-6 w-6" />
